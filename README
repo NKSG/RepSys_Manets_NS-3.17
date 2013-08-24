@@ -1,6 +1,0 @@
-To get started with ns-3, please consult the project tutorial available
-at http://www.nsnam.org/documentation.
-
-Clone this repository
-cd to the NS root folder "ns-3.17"
-Run "./waf" to run a re-build
