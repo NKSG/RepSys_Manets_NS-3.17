@@ -96,6 +96,15 @@ public:
   */
   int64_t AssignStreams (int64_t stream);
 
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  /// Broadcast reputation table entries
+  void BrdcstRepTabEntries ();
+  /// Print out traces and table entries
+  void PrintRepTraces ();
+  /// Perform updates to Social Norm
+  void SocialNormUpdates ();
+//added for CS218 project end ////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
+
 private:
   ///\name Protocol parameters.
   // \{
@@ -201,7 +210,25 @@ private:
   Timer m_triggeredExpireTimer;
 
   /// Provides uniform random variables.
-  Ptr<UniformRandomVariable> m_uniformRandomVariable;  
+  Ptr<UniformRandomVariable> m_uniformRandomVariable; 
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  /// Pointer to current node
+  Ptr<Node> selfNode;
+  /// Number of packets in a transmission
+  uint8_t transmissionSize;
+  /// Number of transmissions in a batch
+  uint8_t batchSize;
+  /// Filename for Reputation table entries
+  std::string CSVfileName_RepTable;
+  /// File name for counter values
+  std::string CSVfileName_Counter;
+  /// Timer to trigger periodic updates from a node
+  Timer repUpdateTimer;
+  /// Flag to reset stats
+  bool reset;
+//added for CS218 project end ////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
+ 
 };
 
 }

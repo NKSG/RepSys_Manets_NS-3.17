@@ -55,6 +55,7 @@
 #include "queue.h"
 #include "radiotap-header.h"
 #include "red-queue.h"
+#include "rep-packet.h"
 #include "sequence-number.h"
 #include "sgi-hashmap.h"
 #include "simple-channel.h"
