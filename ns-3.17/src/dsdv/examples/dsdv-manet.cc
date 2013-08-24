@@ -38,6 +38,7 @@
 #include "ns3/dsdv-helper.h"
 #include <iostream>
 #include <cmath>
+#include <cstdlib> //added
 
 using namespace ns3;
 
@@ -59,7 +60,11 @@ public:
                 uint32_t settlingTime,
                 double dataStart,
                 bool printRoutes,
-                std::string CSVfileName);
+                std::string CSVfileName,
+                uint8_t m_transmissionSize, //added
+                uint8_t m_batchSize, //added
+                std::string CSVfileName_RepTable, //added
+                std::string CSVfileName_Counter); //added
 
 private:
   uint32_t m_nWifis;
@@ -75,6 +80,10 @@ private:
   uint32_t packetsReceived;
   bool m_printRoutes;
   std::string m_CSVfileName;
+  uint8_t m_transmissionSize; //added
+  uint8_t m_batchSize; //added
+  std::string m_CSVfileName_RepTable; //added
+  std::string m_CSVfileName_Counter; //added
 
   NodeContainer nodes;
   NetDeviceContainer devices;
@@ -89,15 +98,15 @@ private:
   void ReceivePacket (Ptr <Socket> );
   Ptr <Socket> SetupPacketReceive (Ipv4Address, Ptr <Node> );
   void CheckThroughput ();
-
+  void PeriodicNodeChange(); //added
 };
 
 int main (int argc, char **argv)
 {
   DsdvManetExample test;
-  uint32_t nWifis = 30;
-  uint32_t nSinks = 10;
-  double totalTime = 100.0;
+  uint32_t nWifis = 10; //added
+  uint32_t nSinks = 10; //added
+  double totalTime = 150.0;
   std::string rate ("8kbps");
   std::string phyMode ("DsssRate11Mbps");
   uint32_t nodeSpeed = 10; // in m/s
@@ -107,10 +116,14 @@ int main (int argc, char **argv)
   double dataStart = 50.0;
   bool printRoutingTable = true;
   std::string CSVfileName = "DsdvManetExample.csv";
+  uint8_t transmissionSize = 5; //added
+  uint8_t batchSize = 2; //added
+  std::string CSVfileName_RepTable = "DsdvManetExample_RepTable.csv"; //added
+  std::string CSVfileName_Counter = "DsdvManetExample_Counter.csv"; //added
 
   CommandLine cmd;
-  cmd.AddValue ("nWifis", "Number of wifi nodes[Default:30]", nWifis);
-  cmd.AddValue ("nSinks", "Number of wifi sink nodes[Default:10]", nSinks);
+  cmd.AddValue ("nWifis", "Number of wifi nodes[Default:10]", nWifis); //added
+  cmd.AddValue ("nSinks", "Number of wifi sink nodes[Default:10]", nSinks); //added
   cmd.AddValue ("totalTime", "Total Simulation time[Default:100]", totalTime);
   cmd.AddValue ("phyMode", "Wifi Phy mode[Default:DsssRate11Mbps]", phyMode);
   cmd.AddValue ("rate", "CBR traffic rate[Default:8kbps]", rate);
@@ -120,6 +133,10 @@ int main (int argc, char **argv)
   cmd.AddValue ("dataStart", "Time at which nodes start to transmit data[Default=50.0]", dataStart);
   cmd.AddValue ("printRoutingTable", "print routing table for nodes[Default:1]", printRoutingTable);
   cmd.AddValue ("CSVfileName", "The name of the CSV output file name[Default:DsdvManetExample.csv]", CSVfileName);
+  cmd.AddValue ("transmissionSize", "Number of packets in a transmission[Default:5]", transmissionSize); //added
+  cmd.AddValue ("batchSize", "Number of transmissions in a batch[Default:2]", batchSize); //added
+  cmd.AddValue ("CSVfileName_RepTable", "The name of the RepTable output file name[Default:DsdvManetExample_RepTable.csv]", CSVfileName); //added
+  cmd.AddValue ("CSVfileName_Counter", "The name of the Counter output file name[Default:DsdvManetExample_Counter.csv]", CSVfileName); //added
   cmd.Parse (argc, argv);
 
   std::ofstream out (CSVfileName.c_str ());
@@ -130,6 +147,15 @@ int main (int argc, char **argv)
   std::endl;
   out.close ();
 
+  std::ofstream outrep (CSVfileName_RepTable.c_str (), std::ios::app); //added
+  outrep << "Current Node" << "," << "Time" << "," << "Neighbor Node ID" << "," << "Neighbor Node Rep" << std::endl; //added
+  outrep.close (); //added
+
+  std::ofstream outcounter (CSVfileName_Counter.c_str (), std::ios::app); //added
+  outcounter << "Node" << "," << "Time" << "," << "delta" << "," << "dropFactor" << "," << "pktSent" << "," << "pktReceived" << "," 
+             << "pktDropped" << "," << "pktGen" << "," << "repBrdSent" << "," << "repBrdReceived" << std::endl; //added
+  outcounter.close (); //added
+
   SeedManager::SetSeed (12345);
 
   Config::SetDefault ("ns3::OnOffApplication::PacketSize", StringValue ("1000"));
@@ -139,7 +165,10 @@ int main (int argc, char **argv)
 
   test = DsdvManetExample ();
   test.CaseRun (nWifis, nSinks, totalTime, rate, phyMode, nodeSpeed, periodicUpdateInterval,
-                settlingTime, dataStart, printRoutingTable, CSVfileName);
+                settlingTime, dataStart, printRoutingTable, CSVfileName, 
+                transmissionSize, batchSize, CSVfileName_RepTable, CSVfileName_Counter); //added
+
+  NS_LOG_UNCOND ("Simulation for " << totalTime << " s complete!");
 
   return 0;
 }
@@ -155,7 +184,7 @@ DsdvManetExample::ReceivePacket (Ptr <Socket> socket)
 {
   NS_LOG_UNCOND (Simulator::Now ().GetSeconds () << " Received one packet!");
   Ptr <Packet> packet;
-  while ((packet = socket->Recv ()))
+  while (packet = socket->Recv ())
     {
       bytesTotal += packet->GetSize ();
       packetsReceived += 1;
@@ -193,7 +222,8 @@ DsdvManetExample::SetupPacketReceive (Ipv4Address addr, Ptr <Node> node)
 void
 DsdvManetExample::CaseRun (uint32_t nWifis, uint32_t nSinks, double totalTime, std::string rate,
                            std::string phyMode, uint32_t nodeSpeed, uint32_t periodicUpdateInterval, uint32_t settlingTime,
-                           double dataStart, bool printRoutes, std::string CSVfileName)
+                           double dataStart, bool printRoutes, std::string CSVfileName, uint8_t transmissionSize, uint8_t batchSize,
+                           std::string CSVfileName_RepTable, std::string CSVfileName_Counter) //added
 {
   m_nWifis = nWifis;
   m_nSinks = nSinks;
@@ -206,6 +236,10 @@ DsdvManetExample::CaseRun (uint32_t nWifis, uint32_t nSinks, double totalTime, s
   m_dataStart = dataStart;
   m_printRoutes = printRoutes;
   m_CSVfileName = CSVfileName;
+  m_transmissionSize = transmissionSize; //added
+  m_batchSize = batchSize; //added
+  m_CSVfileName_RepTable = CSVfileName_RepTable; //added
+  m_CSVfileName_Counter = CSVfileName_Counter; //added
 
   std::stringstream ss;
   ss << m_nWifis;
@@ -216,7 +250,7 @@ DsdvManetExample::CaseRun (uint32_t nWifis, uint32_t nSinks, double totalTime, s
   std::string sTotalTime = ss3.str ();
 
   std::string tr_name = "Dsdv_Manet_" + t_nodes + "Nodes_" + sTotalTime + "SimTime";
-  std::cout << "Trace file generated is " << tr_name << ".tr\n";
+//  std::cout << "Trace file generated is " << tr_name << ".tr\n"; //added
 
   CreateNodes ();
   CreateDevices (tr_name);
@@ -227,6 +261,7 @@ DsdvManetExample::CaseRun (uint32_t nWifis, uint32_t nSinks, double totalTime, s
   std::cout << "\nStarting simulation for " << m_totalTime << " s ...\n";
 
   CheckThroughput ();
+  PeriodicNodeChange(); //added
 
   Simulator::Stop (Seconds (m_totalTime));
   Simulator::Run ();
@@ -238,7 +273,7 @@ DsdvManetExample::CreateNodes ()
 {
   std::cout << "Creating " << (unsigned) m_nWifis << " nodes.\n";
   nodes.Create (m_nWifis);
-  NS_ASSERT_MSG (m_nWifis > m_nSinks, "Sinks must be less or equal to the number of nodes in network");
+  NS_ASSERT_MSG (m_nWifis >= m_nSinks, "Sinks must be less or equal to the number of nodes in network"); //added
 }
 
 void
@@ -256,7 +291,7 @@ DsdvManetExample::SetupMobility ()
                                    << "]";
 
   Ptr <PositionAllocator> taPositionAlloc = pos.Create ()->GetObject <PositionAllocator> ();
- mobility.SetMobilityModel ("ns3::RandomWaypointMobilityModel", "Speed", StringValue (speedConstantRandomVariableStream.str ()),
+  mobility.SetMobilityModel ("ns3::RandomWaypointMobilityModel", "Speed", StringValue (speedConstantRandomVariableStream.str ()),
                              "Pause", StringValue ("ns3::ConstantRandomVariable[Constant=2.0]"), "PositionAllocator", PointerValue (taPositionAlloc));
   mobility.SetPositionAllocator (taPositionAlloc);
   mobility.Install (nodes);
@@ -265,12 +300,15 @@ DsdvManetExample::SetupMobility ()
 void
 DsdvManetExample::CreateDevices (std::string tr_name)
 {
+  double lossExp = 2.0; //added
+  double rssThreshold = -85; //added
   NqosWifiMacHelper wifiMac = NqosWifiMacHelper::Default ();
   wifiMac.SetType ("ns3::AdhocWifiMac");
   YansWifiPhyHelper wifiPhy = YansWifiPhyHelper::Default ();
+  wifiPhy.Set("EnergyDetectionThreshold", DoubleValue(rssThreshold)); //added
   YansWifiChannelHelper wifiChannel;
   wifiChannel.SetPropagationDelay ("ns3::ConstantSpeedPropagationDelayModel");
-  wifiChannel.AddPropagationLoss ("ns3::FriisPropagationLossModel");
+  wifiChannel.AddPropagationLoss ("ns3::LogDistancePropagationLossModel", "Exponent", DoubleValue(lossExp)); //added
   wifiPhy.SetChannel (wifiChannel.Create ());
   WifiHelper wifi;
   wifi.SetStandard (WIFI_PHY_STANDARD_80211b);
@@ -279,8 +317,8 @@ DsdvManetExample::CreateDevices (std::string tr_name)
   devices = wifi.Install (wifiPhy, wifiMac, nodes);
 
   AsciiTraceHelper ascii;
-  wifiPhy.EnableAsciiAll (ascii.CreateFileStream (tr_name + ".tr"));
-  wifiPhy.EnablePcapAll (tr_name);
+//  wifiPhy.EnableAsciiAll (ascii.CreateFileStream (tr_name + ".tr")); //added
+//  wifiPhy.EnablePcapAll (tr_name); //added
 }
 
 void
@@ -289,6 +327,10 @@ DsdvManetExample::InstallInternetStack (std::string tr_name)
   DsdvHelper dsdv;
   dsdv.Set ("PeriodicUpdateInterval", TimeValue (Seconds (m_periodicUpdateInterval)));
   dsdv.Set ("SettlingTime", TimeValue (Seconds (m_settlingTime)));
+  dsdv.Set ("TransmissionSize", UintegerValue (10)); //m_transmissionSize)); //added
+  dsdv.Set ("BatchSize", UintegerValue (2)); //m_batchSize)); //added
+  dsdv.Set ("CSVfileName_RepTable", StringValue (m_CSVfileName_RepTable)); //added
+  dsdv.Set ("CSVfileName_Counter", StringValue (m_CSVfileName_Counter)); //added
   InternetStackHelper stack;
   stack.SetRoutingHelper (dsdv); // has effect on the next Install ()
   stack.Install (nodes);
@@ -310,13 +352,15 @@ DsdvManetExample::InstallApplications ()
       Ptr<Node> node = NodeList::GetNode (i);
       Ipv4Address nodeAddress = node->GetObject<Ipv4> ()->GetAddress (1, 0).GetLocal ();
       Ptr<Socket> sink = SetupPacketReceive (nodeAddress, node);
+      //sink->SetAllowBroadcast(true); //added
     }
 
   for (uint32_t clientNode = 0; clientNode <= m_nWifis - 1; clientNode++ )
     {
       for (uint32_t j = 0; j <= m_nSinks - 1; j++ )
-        {
-          OnOffHelper onoff1 ("ns3::UdpSocketFactory", Address (InetSocketAddress (interfaces.GetAddress (j), port)));
+        { 
+	  OnOffHelper onoff1 ("ns3::UdpSocketFactory", Address (InetSocketAddress (interfaces.GetAddress (j), port)));
+          //OnOffHelper onoff1 ("ns3::UdpSocketFactory", Address (InetSocketAddress (Ipv4Address ("255.255.255.255"), port))); //added
           onoff1.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=1.0]"));
           onoff1.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0.0]"));
 
@@ -329,5 +373,28 @@ DsdvManetExample::InstallApplications ()
             }
         }
     }
+}
+
+//added
+void DsdvManetExample::PeriodicNodeChange ()
+{
+ /* Ptr<Node> newNode = new Node;
+
+  uint8_t rv = rand () % 2;
+  if (rv == 0)
+    {
+        nodes.Add (newNode);
+
+  CreateDevices (tr_name);
+  SetupMobility ();
+  InstallInternetStack (tr_name);
+  InstallApplications ();
+  else 
+        //remove node
+node->Nodedepart
+
+*/
+  Simulator::Schedule (Seconds (5.0), &DsdvManetExample::PeriodicNodeChange, this);
+
 }
 

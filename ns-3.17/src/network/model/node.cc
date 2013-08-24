@@ -18,6 +18,13 @@
  * Authors: George F. Riley<riley@ece.gatech.edu>
  *          Mathieu Lacage <mathieu.lacage@sophia.inria.fr>
  */
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#include <sstream>
+#include <cstdlib>
+#include <string>
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #include "node.h"
 #include "node-list.h"
 #include "net-device.h"
@@ -356,5 +363,351 @@ Node::NotifyDeviceAdded (Ptr<NetDevice> device)
     }  
 }
  
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void
+Node::InitMembers (Ipv4Address selfIpv4)
+{
+  selfAdd = selfIpv4; 
+  UpdateRepTableEntry (selfAdd, REP_DEFAULT, KLOSS_DEFAULT, true);
+}
+
+void
+Node::ResetStats ()
+{
+  delta = (float)rand()/(float)RAND_MAX;
+
+  dropFactor = ((float)rand()/(float)RAND_MAX);
+
+  if ((rand() % 10) == 0) // randomly set drop factor to 0
+    dropFactor = 0;      
+  
+  for (uint32_t i = 0; i < MAX_NODE_LIFE; fDeltaHistory[i++] = -1);
+
+  pktSent = 0;
+  pktReceived = 0;
+  pktDropped = 0;
+  pktGen = 0;
+  repBrdSent = 0;
+  repBrdReceived = 0;
+}
+
+void
+Node::UpdateRepTableEntry (Ipv4Address node, uint32_t rep, float kLoss, bool overWrite)
+{ 
+  repStruct rs;
+  std::map<Ipv4Address, repStruct>::iterator i = Node::repTable.find (node);
+  if (i != Node::repTable.end ()) // map entry exists, update
+    {
+      rs.rep = rep;
+      rs.kLoss = (i->second).kLoss;
+      if (overWrite) // overwrite existing value
+        {
+          Node::repTable.erase (i);   
+          Node::repTable.insert (std::make_pair (node, rs));
+        }
+      return;
+    }
+
+  rs.rep = rep;
+  rs.kLoss = kLoss; 
+  Node::repTable.insert (std::make_pair (node, rs));
+}
+
+bool
+Node::CheckLossTableEntry (Ipv4Address node, uint8_t transmissionSize)
+{
+  std::map<Ipv4Address, uint8_t>::iterator i = Node::lossTable.find (node);
+  if (i != Node::lossTable.end ()) // map entry exists, update
+    {
+       uint8_t sentCount = i->second;
+       Node::lossTable.erase (i);
+
+       if ((sentCount++) + (uint8_t)(dropFactor*transmissionSize) < transmissionSize)
+       // Sent packets count less than required for drop factor - forward it
+         {
+           Node::lossTable.insert (std::make_pair (node, sentCount));
+           return true;
+         }
+       else
+       // Drop packet 
+         {
+           if (sentCount == transmissionSize) // end of transmission size
+             sentCount = 0;
+           Node::lossTable.insert (std::make_pair (node, sentCount));  
+           return false;
+         }
+    }
+     
+  Node::lossTable.insert (std::make_pair (node, 1));
+  return true;
+}
+
+bool 
+Node::UpdateBhvTableEntry (Ipv4Address node, uint64_t pktId, uint8_t transmissionSize, uint8_t batchSize)
+{
+  bhvStruct bs;
+  bs.pkt = new uint64_t[UNACK_PKT_TH];
+  for (uint32_t t = 0; t < UNACK_PKT_TH; t++)
+    bs.pkt[t] = 0;
+  bs.sntCnt = 0;
+  bs.bchCnt = 0;
+  uint8_t j, k;
+  std::map<Ipv4Address, bhvStruct>::iterator i = Node::bhvTable.find (node);
+  if (i != Node::bhvTable.end ()) // map entry exists for node, add pktID
+    {
+      for (j = 0; (j < UNACK_PKT_TH) && ((i->second).pkt[j] != 0); j++) // check if pktId already exists
+        if ((i->second).pkt[j] == pktId)
+          break;
+
+      if ((i->second).pkt[j] == pktId) // duplicate, drop
+        {
+          delete bs.pkt;
+          return false;
+        }
+      else
+        {
+          for (k = 0; k < UNACK_PKT_TH && (i->second).pkt[k] != 0; k++) // copy array of packet IDs
+            bs.pkt[k] = (i->second).pkt[k];
+          if (k == UNACK_PKT_TH) // many packets unacknowledged, drop
+            {
+              delete bs.pkt;
+              return false;
+            }
+          else 
+            {
+              bs.pkt[k] = pktId;
+              bs.sntCnt = ++((i->second).sntCnt);
+              bs.bchCnt = (i->second).bchCnt;
+              Node::bhvTable.erase (i);
+              Node::bhvTable.insert (std::make_pair (node, bs));
+              UpdateRepValues (node, transmissionSize, batchSize);
+              return true;
+            }
+        }
+     }
+  bs.pkt[0] = pktId;
+  bs.sntCnt++;
+  Node::bhvTable.insert (std::make_pair (node, bs));
+  UpdateRepValues (node, transmissionSize, batchSize);
+  return true;
+}
+
+void
+Node::DeleteRepTableEntry (Ipv4Address node)
+{
+  std::map<Ipv4Address, repStruct>::iterator i = Node::repTable.find (node);
+  Node::repTable.erase (i);
+}
+
+void
+Node::DeleteLossTableEntry (Ipv4Address node)
+{
+  std::map<Ipv4Address, uint8_t>::iterator i = Node::lossTable.find (node);
+  Node::lossTable.erase (i);
+}
+
+void 
+Node::DeleteBhvTableEntry (Ipv4Address node, uint64_t pktId)
+{
+  bhvStruct bs;
+  bs.sntCnt = 0;
+  bs.bchCnt = 0;
+  uint8_t j, k;
+  bool dflag = false;
+  std::map<Ipv4Address, bhvStruct>::iterator i = Node::bhvTable.find (node);
+  if (i != Node::bhvTable.end ()) // map entry exists for node, search for pktId
+    {
+      bs.pkt = new uint64_t[UNACK_PKT_TH];
+      for (uint32_t t = 0; t < UNACK_PKT_TH; t++)
+        bs.pkt[t] = 0;
+      for (j = 0, k = 0; (i->second).pkt[j] != 0; j++) // check if pktId already exists
+        {
+          if ((i->second).pkt[j] == pktId)
+            {
+              dflag = true;
+              continue;
+            }
+          bs.pkt[k++] = (i->second).pkt[j];
+
+        }
+
+      if (dflag) // if anything was deleted, updates required to table
+        {
+          bs.sntCnt = (i->second).sntCnt;
+          bs.bchCnt = (i->second).bchCnt;
+          Node::bhvTable.erase (i);
+          if (k > 0) // insert again only if other packets exist
+            Node::bhvTable.insert (std::make_pair (node, bs));
+        }
+    }
+}  
+
+RepActions
+Node::GetRepAction (Ipv4Address src, Ipv4Address dst)
+{
+  uint32_t srep, drep, rrep;
+  srep = GetReputation (src);
+  drep = GetReputation (dst);
+  rrep = GetReputation (selfAdd);
+
+  if (src == selfAdd)
+    return GOOD; // if node is source
+
+  if (funcDelta()) // Probably staying after current batch - follow social norm epsilon
+    {
+      if ((srep>REP_HIGH) && (drep>REP_HIGH) && (rrep>REP_HIGH)) // Social Norm - Perfect Reliability
+        return GOOD;
+      else if ((srep<REP_LOW) || (drep<REP_LOW) || (rrep<REP_LOW) ) // Social Norm - No Reliability
+        return EVIL;
+      else // Social Norm - Partial Reliability
+        return BAD;
+    }
+  else // Probably NOT staying after current batch - drop all packets
+    return EVIL;
+}
+
+uint32_t
+Node::GetReputation (Ipv4Address node)
+{
+  std::map<Ipv4Address, repStruct>::iterator i = Node::repTable.find (node);
+  if (i != Node::repTable.end ()) // map entry exists
+    return (i->second).rep;
+
+  // else add default entry
+  repStruct rs;
+  rs.rep = REP_DEFAULT;
+  rs.kLoss = KLOSS_DEFAULT; 
+  repTable.insert (std::make_pair (node, rs));
+  return REP_DEFAULT; // new entry, return default value 
+} 
+
+uint8_t
+Node::funcDelta ()
+{
+  uint32_t i;
+  for (i = 0; (i < MAX_NODE_LIFE) && (fDeltaHistory[i] != -1); i++);
+  if (i < MAX_NODE_LIFE)
+    fDeltaHistory[i] = (((int)delta*100 + rand()) % 2)?1:0;
+  return fDeltaHistory[i];
+}
+
+void
+Node::AttachRepEntries (std::map<Ipv4Address, uint32_t> &allReps)
+{
+  for (std::map<Ipv4Address, repStruct>::iterator i = Node::repTable.begin (); i != Node::repTable.end (); i++)
+        allReps.insert (std::make_pair (i->first, (i->second).rep));
+}
+
+void
+Node::DettachRepEntries (std::map<Ipv4Address, uint32_t> allReps, Ipv4Address fromNode)
+{
+  for (std::map<Ipv4Address, uint32_t>::iterator i = allReps.begin (); i != allReps.end (); i++)
+    {
+      uint32_t trep; 
+      if (i->first != fromNode)
+        if (i->first == selfAdd)
+          { 
+            trep = GetReputation (selfAdd);
+            if (i->second < trep) // if self's reputation is less than known
+              ChangeToGood ();
+          }
+
+        std::map<Ipv4Address, repStruct>::iterator j = Node::repTable.find (i->first);
+        if (j != Node::repTable.end ()) // map entry exists, update
+          {
+            trep = (i->second + (j->second).rep) / 2;
+            UpdateRepTableEntry (i->first, trep, 0, true); // 0 kLoss as it will be taken from existing entry
+          }
+        else
+          UpdateRepTableEntry (i->first, i->second, 0, true); // 0 kLoss as it will be taken from existing entry      
+    }
+}
+
+void
+Node::UpdateRepValues (Ipv4Address node, uint8_t transmissionSize, uint8_t batchSize)
+{
+  std::map<Ipv4Address, repStruct>::iterator i = Node::repTable.find (node);
+  if (i != Node::repTable.end ()) // map entry exists, update
+    {
+      std::map<Ipv4Address, bhvStruct>::iterator j = Node::bhvTable.find (i->first);
+      if (j != Node::bhvTable.end ()) // map entry exists for node
+        if ((j->second).sntCnt >= (transmissionSize * batchSize)) // batch is complete
+          {
+            uint8_t k, batches = 0, temp1, temp2, temp3;
+            uint8_t rep = (i->second).rep;
+            float kLoss = (i->second).kLoss;
+
+            // update reputation
+            batches = (j->second).sntCnt / (transmissionSize * batchSize);
+            temp1 = (uint8_t)(batchSize * transmissionSize);
+            temp2 = (uint8_t)(temp1 * batches);
+            temp3 = (uint8_t)(temp2 * kLoss);
+
+            for (k = 0; ((j->second).pkt[k] != 0) && (k < UNACK_PKT_TH); k++); // check pktId count 
+
+            if (k == 0) // perfect reliability provided, increase reputation
+              {
+                if (rep < REP_MAX)
+                  rep ++; // GOOD
+              }
+            else if ((k == 1) && (temp3 != 1)) // near perfect reliability provided, no action
+              {
+                // no action
+              }
+            else // partial or no reliability, decrease reputation
+              if (rep > REP_MIN)
+              {
+                rep--; // BAD
+                if (k > temp3)
+                  if (rep > REP_MIN)
+                    rep--; // EVIL
+              }
+
+            UpdateRepTableEntry (i->first, rep, kLoss, true);
+
+            uint8_t x, y;
+            bhvStruct bs;
+            bs.pkt = new uint64_t[UNACK_PKT_TH];
+            for (uint32_t t = 0; t < UNACK_PKT_TH; t++)
+              bs.pkt[t] = 0;
+            bs.sntCnt = (j->second).sntCnt - (batches * batchSize * transmissionSize);
+            bs.bchCnt = (j->second).bchCnt + batches;
+
+            for (x = temp2, y = 0; ((j->second).pkt[x] != 0) && x < UNACK_PKT_TH; x++) // delete first temp3 pktIDs        
+              bs.pkt[y++] = (j->second).pkt[x]; 
+            Node::bhvTable.erase (j);
+            if (y > 0) // insert again only if other packets exist
+              Node::bhvTable.insert (std::make_pair (i->first, bs));
+          }
+    }
+}
+
+bool
+Node::Nodedepart ()
+{
+  uint32_t c01 = 0, c02 = 0, c0 = 0, i = 0;
+  for (; (i < MAX_NODE_LIFE/2) && (fDeltaHistory[i] != -1); i++)
+    if (fDeltaHistory[i] == 0)
+      c01++;
+
+  for (; (i < MAX_NODE_LIFE) && (fDeltaHistory[i] != -1); i++)
+    if (fDeltaHistory[i] == 0)
+      c02++;
+
+  c0 = c01 + c02;
+
+  if ((i == MAX_NODE_LIFE) && (c0 > MAX_NODE_LIFE/2) && (c02>c01))
+    return true;
+  return false; 
+}
+
+void
+Node::ChangeToGood ()
+{
+std::cout<<"changing \n";
+  if (dropFactor > 0.05)
+    dropFactor -= 0.05; // reduce drop factor
+}
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 } // namespace ns3

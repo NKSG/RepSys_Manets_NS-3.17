@@ -30,6 +30,14 @@
  * US Department of Defense (DoD), and ITTC at The University of Kansas.
  */
 
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#include <iostream>
+#include <cstdlib>
+#include "ns3/string.h"
+#include "ns3/rep-packet.h"
+#include "ns3/node-container.h"
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #include "dsdv-routing-protocol.h"
 #include "ns3/log.h"
 #include "ns3/inet-socket-address.h"
@@ -114,6 +122,26 @@ RoutingProtocol::GetTypeId (void)
                    TimeValue (Seconds (5)),
                    MakeTimeAccessor (&RoutingProtocol::m_settlingTime),
                    MakeTimeChecker ())
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    .AddAttribute ("TransmissionSize", "Number of packets in a transmission",
+                   UintegerValue (5),
+                   MakeUintegerAccessor (&RoutingProtocol::transmissionSize),
+                   MakeUintegerChecker<uint8_t> ())
+    .AddAttribute ("BatchSize", "Number of transmissions in a batch",
+                   UintegerValue (2),
+                   MakeUintegerAccessor (&RoutingProtocol::batchSize),
+                   MakeUintegerChecker<uint8_t> ())
+    .AddAttribute ("CSVfileName_RepTable", "The name of the RepTable output file name",
+                   StringValue ("DsdvManetExample_RepTable.csv"),
+                   MakeStringAccessor (&RoutingProtocol::CSVfileName_RepTable),
+                   MakeStringChecker ())
+    .AddAttribute ("CSVfileName_Counter", "The name of the Counter output file name",
+                   StringValue ("DsdvManetExample_Counter.csv"),
+                   MakeStringAccessor (&RoutingProtocol::CSVfileName_Counter),
+                   MakeStringChecker ())
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
     .AddAttribute ("MaxQueueLen", "Maximum number of packets that we allow a routing protocol to buffer.",
                    UintegerValue (500 /*assuming maximum nodes in simulation is 100*/),
                    MakeUintegerAccessor (&RoutingProtocol::m_maxQueueLen),
@@ -231,6 +259,14 @@ RoutingProtocol::PrintRoutingTable (Ptr<OutputStreamWrapper> stream) const
 void
 RoutingProtocol::Start ()
 {
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  Ptr<Ipv4L3Protocol> l3 = m_ipv4->GetObject<Ipv4L3Protocol> ();
+  selfNode = (l3->GetNetDevice (1))->GetNode ();
+  selfNode->InitMembers(m_mainAddress);
+  reset = true;
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   m_queue.SetMaxPacketsPerDst (m_maxQueuedPacketsPerDst);
   m_queue.SetMaxQueueLen (m_maxQueueLen);
   m_queue.SetQueueTimeout (m_maxQueueTime);
@@ -240,6 +276,12 @@ RoutingProtocol::Start ()
   m_ecb = MakeCallback (&RoutingProtocol::Drop,this);
   m_periodicUpdateTimer.SetFunction (&RoutingProtocol::SendPeriodicUpdate,this);
   m_periodicUpdateTimer.Schedule (MicroSeconds (m_uniformRandomVariable->GetInteger (0,1000)));
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  repUpdateTimer.SetFunction (&RoutingProtocol::SocialNormUpdates,this);
+  repUpdateTimer.Schedule (Seconds (50));
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 }
 
 Ptr<Ipv4Route>
@@ -293,13 +335,14 @@ RoutingProtocol::RouteOutput (Ptr<Packet> p,
           NS_LOG_DEBUG ("A route exists from " << route->GetSource ()
                                                << " to neighboring destination "
                                                << route->GetDestination ());
+
           if (oif != 0 && route->GetOutputDevice () != oif)
             {
               NS_LOG_DEBUG ("Output device doesn't match. Dropped.");
               sockerr = Socket::ERROR_NOROUTETOHOST;
               return Ptr<Ipv4Route> ();
             }
-          return route;
+         return route;
         }
       else
         {
@@ -311,12 +354,14 @@ RoutingProtocol::RouteOutput (Ptr<Packet> p,
               NS_LOG_DEBUG ("A route exists from " << route->GetSource ()
                                                    << " to destination " << dst << " via "
                                                    << rt.GetNextHop ());
+
               if (oif != 0 && route->GetOutputDevice () != oif)
                 {
                   NS_LOG_DEBUG ("Output device doesn't match. Dropped.");
                   sockerr = Socket::ERROR_NOROUTETOHOST;
                   return Ptr<Ipv4Route> ();
                 }
+
               return route;
             }
         }
@@ -359,6 +404,21 @@ RoutingProtocol::RouteInput (Ptr<const Packet> p,
                              LocalDeliverCallback lcb,
                              ErrorCallback ecb)
 {
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// header->getdestination ---> THE destination
+// header->getsource ---> THE source
+// route-->getgateway ---> next hop 
+// route-->getdestination ---> next hop
+// route-->getsource ---> current node
+
+  std::string LogfileName_RI = "DsdvManetExample_RI.log";
+  std::ofstream outri (LogfileName_RI.c_str (),std::ios::app);
+  outri << "Received packet " << p->GetUid () << " from " << header.GetSource () << " on interface " << idev->GetAddress ()
+                                 << " to destination " << header.GetDestination ()  << "\n";
+  selfNode->IncPktReceived ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   NS_LOG_FUNCTION (m_mainAddress << " received packet " << p->GetUid ()
                                  << " from " << header.GetSource ()
                                  << " on interface " << idev->GetAddress ()
@@ -366,6 +426,11 @@ RoutingProtocol::RouteInput (Ptr<const Packet> p,
   if (m_socketAddresses.empty ())
     {
       NS_LOG_DEBUG ("No dsdv interfaces");
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      outri.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
       return false;
     }
   NS_ASSERT (m_ipv4 != 0);
@@ -376,9 +441,43 @@ RoutingProtocol::RouteInput (Ptr<const Packet> p,
   Ipv4Address dst = header.GetDestination ();
   Ipv4Address origin = header.GetSource ();
 
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  Ptr<Ipv4Route> pRoute = Create<Ipv4Route> ();
+  pRoute->SetSource(m_mainAddress);
+  pRoute->SetOutputDevice(selfNode->GetDevice(idev->GetIfIndex()));
+  pRoute->SetDestination(origin);
+  pRoute->SetGateway(origin);
+
+  Ipv4Address nhop;
+  Ptr<Node> pnode;
+  NodeContainer const &nc = NodeContainer::GetGlobal ();
+  for (NodeContainer::Iterator i = nc.Begin (); i != nc.End (); i++)
+    {
+      Ptr<Node> n = *i;
+      Ipv4Address nAddress = n->GetIpv4Address ();
+      if (nAddress == origin )
+        {
+          pnode= *i;
+          break;
+        }
+     }  
+
+  // workarounds to update source's counters (since it is max 2 hop previous = source)
+  pnode->IncPktGen ();
+  pnode->IncPktSent ();
+  if (m_mainAddress != dst) // if not dst, insert tracking record into pevious node's BhvTab
+    // ignore drop indicator from function, as this is done at current node for previous node - happens if this is the second forwarder 
+    pnode->UpdateBhvTableEntry (m_mainAddress, p->GetUid(), transmissionSize, batchSize); 
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   // DSDV is not a multicast routing protocol
   if (dst.IsMulticast ())
     {
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      outri.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
       return false;
     }
 
@@ -389,22 +488,35 @@ RoutingProtocol::RouteInput (Ptr<const Packet> p,
       if (p->PeekPacketTag (tag))
         {
           DeferredRouteOutput (p,header,ucb,ecb);
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+          outri.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
           return true;
         }
     }
+
   for (std::map<Ptr<Socket>, Ipv4InterfaceAddress>::const_iterator j =
          m_socketAddresses.begin (); j != m_socketAddresses.end (); ++j)
     {
       Ipv4InterfaceAddress iface = j->second;
       if (origin == iface.GetLocal ())
         {
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+          outri.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
           return true;
         }
     }
+
   // LOCAL DELIVARY TO DSDV INTERFACES
   for (std::map<Ptr<Socket>, Ipv4InterfaceAddress>::const_iterator j = m_socketAddresses.begin (); j
        != m_socketAddresses.end (); ++j)
     {
+
       Ipv4InterfaceAddress iface = j->second;
       if (m_ipv4->GetInterfaceForAddress (iface.GetLocal ()) == iif)
         {
@@ -436,6 +548,11 @@ RoutingProtocol::RouteInput (Ptr<const Packet> p,
                       NS_LOG_DEBUG ("No route to forward. Drop packet " << p->GetUid ());
                     }
                 }
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              outri.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
               return true;
             }
         }
@@ -453,8 +570,14 @@ RoutingProtocol::RouteInput (Ptr<const Packet> p,
           NS_LOG_ERROR ("Unable to deliver packet locally due to null callback " << p->GetUid () << " from " << origin);
           ecb (p, header, Socket::ERROR_NOROUTETOHOST);
         }
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      outri.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
       return true;
     }
+
   RoutingTableEntry toDst;
   if (m_routingTable.LookupRoute (dst,toDst))
     {
@@ -466,12 +589,86 @@ RoutingProtocol::RouteInput (Ptr<const Packet> p,
                                       << " to " << dst
                                       << " from " << header.GetSource ()
                                       << " via nexthop neighbor " << toDst.GetNextHop ());
-          ucb (route,p,header);
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+          outri << m_mainAddress << " is forwarding packet " << p->GetUid ()
+                                      << " to " << dst
+                                      << " from " << header.GetSource ()
+                                      << " via nexthop neighbor " << toDst.GetNextHop () <<"\n";  
+
+           nhop = route->GetGateway();
+           if (origin == selfNode->GetIpv4Address())
+           {
+              outri << "Self forwarding packet " << p->GetUid () << " src " << origin << " next hop " << nhop << " dst " << dst << "\n";
+              selfNode->IncPktGen();
+              selfNode->IncPktSent();
+              ucb (route, p, header);
+
+              if (route->GetDestination() != route->GetGateway()) // next hop needs to forward packet, so track it in pktTable
+                { 
+                  selfNode->UpdateBhvTableEntry (route->GetGateway(), p->GetUid(), transmissionSize, batchSize);
+                  outri << "Adding entry to behaviour table, next hop " << route->GetGateway() << " needs to forward\n";
+                }
+           } 
+           RepActions action = selfNode->GetRepAction (origin, dst); 
+           if (action == GOOD) // Forward all - follow social norm: perfect reliability
+             {
+               outri << "Good forwarding packet " << p->GetUid () << " src " << origin << " next hop " << nhop << " dst " << dst << "\n";   
+               selfNode->IncPktSent();
+               ucb (route, p, header);
+
+               if (route->GetDestination() != route->GetGateway()) // next hop needs to forward packet, so track it in pktTable
+                {
+                  selfNode->UpdateBhvTableEntry (route->GetGateway(), p->GetUid(), transmissionSize, batchSize);
+                  outri << "Adding entry to behaviour table, next hop " << route->GetGateway() << " needs to forward\n";
+                }
+                pnode->DeleteBhvTableEntry (m_mainAddress, p->GetUid ()); // delete entry from previous node's tracking
+             }
+           else if (action == BAD) // Drop % - follow social norm: partial reliability
+           /* 
+            * Check packet sent and drop count from current transmission
+            * drop based on drop factor and counts
+            * reset values at end of each transmission
+            * Transmission = sequence of packets
+            */
+             {
+               if (selfNode->CheckLossTableEntry (nhop, transmissionSize)) // forward
+                 {
+                   outri << "Bad forwarding packet " << p->GetUid () << " src " << origin << " next hop " << nhop << " dst " << dst << "\n";  
+                   selfNode->IncPktSent();
+                   ucb (route, p, header);
+                   if (route->GetDestination() != route->GetGateway()) // next hop needs to forward packet, so track it in pktTable
+                     {   
+                       selfNode->UpdateBhvTableEntry (route->GetGateway(), p->GetUid(), transmissionSize, batchSize);
+                       outri << "Adding entry to behaviour table, next hop " << route->GetGateway() << " needs to forward\n";
+                     }
+                   pnode->DeleteBhvTableEntry (m_mainAddress, p->GetUid ()); // delete entry from previous node's tracking
+                 } 
+               else
+                 {
+                   outri << "Bad dropping packet " << p->GetUid () << " src " << origin << " next hop " << nhop << " dst " << dst << "\n";  
+                   selfNode->IncPktDropped();
+                 }
+             }
+           else // (action == EVIL) Drop all - low probability of staying back OR follow social norm: no reliability
+             {
+                outri << "Evil dropping packet " << p->GetUid () << " src " << origin << " next hop " << nhop << " dst " << dst << "\n"; 
+                selfNode->IncPktDropped();
+             }
+
+           outri.close ();         
+//          ucb (route,p,header); //added
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
           return true;
         }
     }
   NS_LOG_LOGIC ("Drop packet " << p->GetUid ()
                                << " as there is no route to forward it.");
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  outri.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   return false;
 }
 
@@ -537,11 +734,31 @@ RoutingProtocol::RecvDsdv (Ptr<Socket> socket)
   NS_LOG_FUNCTION (m_mainAddress << " received dsdv packet of size: " << packetSize
                                  << " and packet id: " << packet->GetUid ());
   uint32_t count = 0;
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // if previous hop sensed forward by intermediate packet, implicit acknowledgement
+  std::string LogfileName_RecvDsdv = "DsdvManetExample_RecvDsdv.log";
+  std::ofstream outrd (LogfileName_RecvDsdv.c_str (),std::ios::app);
+  outrd << "Received Dsdv packet of size " << packetSize << " from " << sourceAddress << " current address" << receiver << "\n";
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   for (; packetSize > 0; packetSize = packetSize - 12)
     {
       count = 0;
       DsdvHeader dsdvHeader, tempDsdvHeader;
       packet->RemoveHeader (dsdvHeader);
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      // if blank dsdvHeader, break - delimiter and next starts repHeader
+      if ((dsdvHeader.GetDst () == Ipv4Address ()) && (dsdvHeader.GetDstSeqno () == 0) && (dsdvHeader.GetHopCount () == 0))
+        {
+          outrd << "Blank header seen, marks start of reputation entries \n";
+          selfNode->IncRepBrdReceived ();
+          packetSize = packetSize - 12;
+          break;
+        }  
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
       NS_LOG_DEBUG ("Processing new update for " << dsdvHeader.GetDst ());
       /*Verifying if the packets sent by me were returned back to me. If yes, discarding them!*/
       for (std::map<Ptr<Socket>, Ipv4InterfaceAddress>::const_iterator j = m_socketAddresses.begin (); j
@@ -593,6 +810,14 @@ RoutingProtocol::RecvDsdv (Ptr<Socket> socket)
               m_routingTable.AddRoute (newEntry);
               NS_LOG_DEBUG ("New Route added to both tables");
               m_advRoutingTable.AddRoute (newEntry);
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              // initialization, don't overwrite existing values
+              outrd << "Updating entries to reputation table\n";
+              float loss = (float)rand () / (float)RAND_MAX;
+              selfNode->UpdateRepTableEntry (dsdvHeader.GetDst (), REP_DEFAULT, loss, false);
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
             }
           else
             {
@@ -754,6 +979,19 @@ RoutingProtocol::RecvDsdv (Ptr<Socket> socket)
             }
         }
     }
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  std::map<Ipv4Address, uint32_t> allReps;
+  outrd << "Unpacking the reputation header\n";
+  for (; packetSize > 0; packetSize = packetSize - 8)
+    {
+      rep::RepHeader rh;
+      packet->RemoveHeader (rh);
+      allReps.insert (std::make_pair (rh.GetNodeId (), rh.GetRepValue ()));
+    } 
+  selfNode->DettachRepEntries(allReps, m_mainAddress);
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   std::map<Ipv4Address, RoutingTableEntry> allRoutes;
   m_advRoutingTable.GetListOfAllRoutes (allRoutes);
   if (EnableRouteAggregation && allRoutes.size () > 0)
@@ -764,6 +1002,11 @@ RoutingProtocol::RecvDsdv (Ptr<Socket> socket)
     {
       Simulator::Schedule (MicroSeconds (m_uniformRandomVariable->GetInteger (0,1000)),&RoutingProtocol::SendTriggeredUpdate,this);
     }
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    outrd.close ();
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 }
 
 
@@ -1021,6 +1264,15 @@ RoutingProtocol::NotifyAddAddress (uint32_t i,
       RoutingTableEntry rt (/*device=*/ dev, /*dst=*/ iface.GetBroadcast (),/*seqno=*/ 0, /*iface=*/ iface,/*hops=*/ 0,
                                         /*next hop=*/ iface.GetBroadcast (), /*lifetime=*/ Simulator::GetMaximumSimulationTime ());
       m_routingTable.AddRoute (rt);
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      // initialization, don't overwrite existing values
+      float loss = (float)rand () / (float)RAND_MAX;
+      selfNode->UpdateRepTableEntry ((rt.GetRoute())->GetGateway(), REP_DEFAULT, loss, false);
+      loss = (float)rand () / (float)RAND_MAX;
+      selfNode->UpdateRepTableEntry ((rt.GetRoute())->GetSource(), REP_DEFAULT, loss, false); 
+//added for CS218 project end ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
     }
 }
 
@@ -1207,5 +1459,76 @@ RoutingProtocol::MergeTriggerPeriodicUpdates ()
         }
     }
 }
+
+//added for CS218 project begin /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void
+RoutingProtocol::BrdcstRepTabEntries ()
+{
+  // Create a socket to listen only on this interface
+  Ptr<Ipv4L3Protocol> l3 = m_ipv4->GetObject<Ipv4L3Protocol> ();
+  Ptr<Socket> socketR = Socket::CreateSocket (GetObject<Node> (), UdpSocketFactory::GetTypeId ());
+  socketR->SetRecvCallback (MakeCallback (&RoutingProtocol::RecvDsdv, this));
+  socketR->BindToNetDevice (l3->GetNetDevice (1));
+  socketR->Bind (InetSocketAddress (Ipv4Address::GetAny (), DSDV_PORT));
+  socketR->SetAllowBroadcast (true);
+  socketR->SetAttribute ("IpTtl", UintegerValue (1));
+
+  Ptr<Packet> packet = Create<Packet> ();
+  std::map<Ipv4Address, uint32_t> allReps;
+  selfNode->AttachRepEntries (allReps);
+  for (std::map<Ipv4Address, uint32_t>::const_iterator i = allReps.begin (); i != allReps.end (); ++i)
+    {
+      rep::RepHeader rh;
+      rh.SetNodeId (i->first);
+      rh.SetRepValue (i->second);
+      packet->AddHeader (rh);
+    }
+
+  DsdvHeader blankDsdvHeader;
+  packet->AddHeader (blankDsdvHeader);
+  socketR->Send (packet);
+  selfNode->IncRepBrdSent ();
+  // Send to all-hosts broadcast if on /32 addr, subnet-directed otherwise
+  Ipv4Address destination;
+  destination = Ipv4Address ("255.255.255.255");
+  socketR->SendTo (packet, 0, InetSocketAddress (destination, DSDV_PORT));
+}
+
+void
+RoutingProtocol::PrintRepTraces ()
+{
+  std::ofstream outrep (CSVfileName_RepTable.c_str (), std::ios::app);
+  std::ofstream outcounter (CSVfileName_Counter.c_str (), std::ios::app);
+  Ptr<Ipv4L3Protocol> l3 = m_ipv4->GetObject<Ipv4L3Protocol> ();
+  Ptr<Packet> packet = Create<Packet> ();
+  std::map<Ipv4Address, uint32_t> allReps;
+  double timeDisp = Simulator::Now ().GetSeconds ();
+
+  // print out reputation table entries
+  selfNode->AttachRepEntries(allReps);
+  for (std::map<Ipv4Address, uint32_t> ::const_iterator j = allReps.begin (); j != allReps.end (); ++j)
+    outrep << m_mainAddress<<"," << timeDisp <<"," << j->first << "," << j->second << std::endl;
+
+  // print out counter and other values
+  outcounter << m_mainAddress << "," << timeDisp << "," << selfNode->GetDelta () << "," << selfNode->GetDropFactor () << ","
+             << selfNode->GetPktSent () << "," << selfNode->GetPktReceived () << "," << selfNode->GetPktDropped () << "," 
+             << selfNode->GetPktGen () << "," << selfNode->GetRepBrdSent () << "," << selfNode->GetRepBrdReceived () << std::endl;
+
+  outrep.close();
+  outcounter.close();
+}
+
+void
+RoutingProtocol::SocialNormUpdates ()
+{
+  if (reset)
+        selfNode->ResetStats ();
+  reset = false;
+  BrdcstRepTabEntries ();
+  PrintRepTraces ();
+  repUpdateTimer.Schedule (Seconds (10));
+}
+//added for CS218 project end ////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
+
 }
 }
