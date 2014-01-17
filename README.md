@@ -2,7 +2,7 @@ RepSys_Manets_NS-3.17
 =============
 
 Developer	: Deepak Ananth Rama; Nagendra Akula Suresh Babu; Zongsheng Li
-email		: deepak.ananthrama@gmail.com
+email		: deepakananthrama@gmail.com
 Date		: December 2012
 For		: Research paper titled "Reputation System for Wireless Networks" (mostly implementation) based on the work on the same topic by Chuchu Wu towards her PhD thesis at UCLA, CS Dept.
 At		: Computer Science Department at University of California, Los Angeles
